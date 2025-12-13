@@ -1,0 +1,25 @@
+{
+  "name": "vue-phone",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@vueuse/core": "^14.1.0",
+    "autoprefixer": "^10.4.22",
+    "jssip": "^3.10.6",
+    "lucide-vue-next": "^0.560.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "vue": "^3.5.24"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.2.4"
+  }
+}
