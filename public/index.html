@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone SDK Demo</title>
+    <!-- Import SDK CSS (Relative to root in dist) -->
+    <link rel="stylesheet" href="./vue-phone.css">
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+
+        .demo-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: 0 auto;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="demo-box">
+        <h1>Phone SDK Verification</h1>
+        <p>This page loads the built SDK from the current directory.</p>
+
+        <div id="phone-container"></div>
+
+        <div style="margin-top: 20px;">
+            <h3>Test Call</h3>
+            <input type="text" id="target" placeholder="Enter number to call">
+            <button onclick="makeCall()">Call</button>
+        </div>
+    </div>
+
+    <!-- Import SDK JS (Relative to root in dist) -->
+    <script src="./phone-sdk.umd.js"></script>
+
+    <script>
+        console.log('Checking PhoneSDK...');
+        if (window.PhoneSDK) {
+            console.log('PhoneSDK found:', window.PhoneSDK);
+
+            // Initialize
+            window.PhoneSDK.init({
+                id: 'phone-container',
+                // Optional: Prefill credentials if needed for testing
+                // user: '1001',
+                // password: '...',
+                // domain: '...',
+                // socketUrl: '...'
+            });
+
+        } else {
+            console.error('PhoneSDK not found on window!');
+        }
+
+        function makeCall() {
+            const num = document.getElementById('target').value;
+            if (num && window.PhoneSDK) {
+                window.PhoneSDK.makeCall(num);
+            }
+        }
+    </script>
+</body>
+
+</html>

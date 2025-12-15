@@ -6,6 +6,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [vue()],
   build: {
+    copyPublicDir: true, // Enable copying of public/ directory
     lib: {
       entry: path.resolve(__dirname, 'src/sdk.js'),
       name: 'PhoneSDK',
