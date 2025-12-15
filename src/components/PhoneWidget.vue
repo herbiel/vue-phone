@@ -2,17 +2,38 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { usePhone } from '../composables/usePhone';
-import { Phone, Mic, MicOff, Pause, Play, Grip, ArrowRightLeft, PhoneOff, ChevronDown, ChevronUp, Wifi, Clock, X, Delete } from 'lucide-vue-next';
+import { Phone, Mic, MicOff, Pause, Play, Grip, ArrowRightLeft, PhoneOff, ChevronDown, ChevronUp, Wifi, Clock, X, Delete, LogOut } from 'lucide-vue-next';
 
 // Use the existing Composable logic
-const { state, login, call, answer, hangup, mute, hold, sendDTMF, transfer, tryAutoLogin, history, clearHistory, setAgentStatus } = usePhone();
+const { state, login, logout, call, answer, hangup, mute, hold, sendDTMF, transfer, tryAutoLogin, history, clearHistory, setAgentStatus } = usePhone();
 
 const form = ref({
-  user: '',
-  password: '',
-  domain: '',
-  socketUrl: ''
+  user: '1001',
+  password: '1de3ef49c86241a',
+  domain: 'telephone.ivoji.site',
+  socketUrl: 'wss://telephone.ivoji.site:7443',
+  useIce: true,
+  iceString: 'stun:stun.freeswitch.org:3478'
 });
+
+// Lock Screen State
+const isLocked = ref(true);
+const unlockPassword = ref('');
+const unlockError = ref('');
+const APP_PIN = 'Iv0ji@2025'; 
+
+const handleUnlock = () => {
+    if (unlockPassword.value === APP_PIN) {
+        isLocked.value = false;
+        // Auto-login after unlock if not registered
+        if (!state.isRegistered) {
+            handleLogin(); 
+        }
+    } else {
+        unlockError.value = 'Incorrect Password';
+        unlockPassword.value = '';
+    }
+};
 
 // UI State
 const isActive = ref(true); // Maps to expanded/minimized
@@ -53,6 +74,68 @@ const handleDialKey = (key) => {
 
 const handleBackspace = () => {
     dialNumber.value = dialNumber.value.slice(0, -1);
+};
+
+// Standalone Mic Test
+const testMicLevel = ref(0);
+const isTestingMic = ref(false);
+const micError = ref(''); // Store error message
+const availableDevices = ref([]);
+let testMicCtx = null;
+let testMicStream = null;
+
+const toggleMicTest = async () => {
+    micError.value = ''; // Reset error
+    
+    if (isTestingMic.value) {
+        // Stop test
+        if (testMicStream) {
+            testMicStream.getTracks().forEach(t => t.stop());
+            testMicStream = null;
+        }
+        if (testMicCtx) {
+            testMicCtx.close();
+            testMicCtx = null;
+        }
+        isTestingMic.value = false;
+        testMicLevel.value = 0;
+    } else {
+        // Start test
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("navigator.mediaDevices.getUserMedia is undefined. Are you on HTTPS or localhost?");
+            }
+
+            // List devices for debug
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            availableDevices.value = devices.filter(d => d.kind === 'audioinput').map(d => d.label || d.deviceId);
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            testMicStream = stream;
+            isTestingMic.value = true;
+            
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            testMicCtx = new AudioContext();
+            const source = testMicCtx.createMediaStreamSource(stream);
+            const analyser = testMicCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            const update = () => {
+                if (!isTestingMic.value) return;
+                analyser.getByteFrequencyData(dataArray);
+                const avg = dataArray.reduce((p, c) => p + c, 0) / dataArray.length;
+                testMicLevel.value = Math.min(100, Math.round(avg * 2));
+                requestAnimationFrame(update);
+            };
+            update();
+            
+        } catch (e) {
+            console.error("Mic Test Failed:", e);
+            micError.value = e.toString();
+        }
+    }
 };
 
 const handleCallFromDialer = () => {
@@ -101,6 +184,12 @@ const handleLogin = () => {
     }
 };
 
+const handleLogout = () => {
+    console.log('[PhoneWidget] Logout button clicked');
+    logout();
+    // Optional: Reset form or other UI state if needed
+};
+
 const handleCall = (number) => {
     if(!state.isRegistered) {
         alert("Please login first");
@@ -125,6 +214,10 @@ const toggleMinimize = () => {
 // ---------------------------
 // Ringtone Logic (Web Audio API)
 // ---------------------------
+const isSecure = window.isSecureContext;
+const protocol = window.location.protocol;
+const hostname = window.location.hostname;
+
 let audioCtx = null;
 let oscillator = null;
 let gainNode = null;
@@ -196,13 +289,26 @@ watch(() => state.audioStream, (newStream) => {
         // Ensure it plays (sometimes verifying promise helps debugging)
         remoteAudio.value.play().catch(e => console.error("Error playing remote audio:", e));
     }
-});
+}, { immediate: true });
 </script>
 
 <template>
   <div>
+    <!-- Lock Screen Overlay -->
+    <div v-if="isLocked" class="fixed inset-0 z-[9999] bg-[#2c3e50] flex flex-col items-center justify-center text-white">
+        <div class="w-64 p-6 bg-[#34495e] rounded-lg shadow-xl text-center">
+            <h2 class="text-xl font-bold mb-4">Phone Locked</h2>
+            <input type="password" v-model="unlockPassword" @keyup.enter="handleUnlock" placeholder="Enter PIN" 
+                   class="w-full bg-[#2c3e50] border border-gray-600 rounded p-2 text-center text-white mb-4 outline-none focus:border-blue-500 transition-colors" />
+            <button @click="handleUnlock" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded transition-colors">
+                Unlock
+            </button>
+            <p v-if="unlockError" class="text-red-400 text-xs mt-2">{{ unlockError }}</p>
+        </div>
+    </div>
+
     <!-- Login Overlay (Preserved functionality, using similar style to new bar if possible, or keeping previous simple style) -->
-    <div v-if="!state.isRegistered" 
+    <div v-else-if="!state.isRegistered" 
          class="fixed bottom-4 right-4 z-50 w-[320px] bg-[#2c3e50] text-[#ecf0f1] rounded-[16px] p-[15px] shadow-[0_10px_30px_rgba(0,0,0,0.4)] flex flex-col gap-4 transition-all">
          <h2 class="text-lg font-bold border-b border-white/10 pb-2">SIP Login</h2>
          <input v-model="form.user" placeholder="Extension" class="bg-[#34495e] border-none rounded p-2 text-white placeholder-gray-400 outline-none" />
@@ -221,6 +327,35 @@ watch(() => state.audioStream, (newStream) => {
          </div>
 
          <button @click="handleLogin" class="bg-[#2980b9] hover:bg-[#3498db] text-white font-bold py-2 rounded transition-colors mt-2">Connect</button>
+         
+         <!-- Secure Context Warning -->
+         <div v-if="!isSecure" class="bg-yellow-600/50 p-2 rounded mt-2 text-center">
+             <div class="text-[10px] font-bold text-yellow-200 uppercase mb-1">Warning: Insecure Context</div>
+             <p class="text-[10px] leading-tight text-white/80">
+                 Microphone access <strong>requires HTTPS</strong> or <strong>localhost</strong>. 
+                 <br>Current: {{ protocol }} // {{ hostname }}
+             </p>
+         </div>
+
+         <div class="border-t border-white/10 pt-2 mt-2">
+            <button @click="toggleMicTest" :class="['w-full py-1 text-xs rounded transition-colors', isTestingMic ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-500']">
+                {{ isTestingMic ? 'Stop Mic Test' : 'Test Microphone' }}
+            </button>
+            <div v-if="isTestingMic" class="mt-2">
+                <div class="text-xs text-center mb-1">Level: {{ testMicLevel }}%</div>
+                <div class="w-full bg-gray-700 h-2 rounded overflow-hidden">
+                    <div class="h-full bg-green-500 transition-all duration-75" :style="{ width: testMicLevel + '%' }"></div>
+                </div>
+                <div class="mt-2 text-[10px] text-gray-400">
+                    Devices found: {{ availableDevices.length }}
+                    <div v-for="d in availableDevices" :key="d" class="truncate">{{ d }}</div>
+                </div>
+            </div>
+            <div v-if="micError" class="mt-2 text-xs text-red-400 bg-red-900/20 p-1 rounded break-all">
+                {{ micError }}
+            </div>
+         </div>
+
          <p v-if="state.error" class="text-[#e74c3c] text-xs text-center">{{ state.error }}</p>
     </div>
 
@@ -247,6 +382,21 @@ watch(() => state.audioStream, (newStream) => {
                 <div v-else class="status-text">Ready</div>
                 
                 <span v-if="state.callStatus !== 'idle'" class="status-text md:hidden">{{ remoteName || 'Connected' }}</span>
+                
+                <!-- Logout Button -->
+                <!-- settings/mic test popover trigger could go here, but let's just add a small icon or button -->
+                 <button @click="toggleMicTest" :class="['text-gray-400 hover:text-white p-1 ml-1', {'text-green-500': isTestingMic}]" title="Test Mic" >
+                    <Mic class="w-4 h-4"/>
+                </button>
+                <div v-if="isTestingMic" class="absolute top-full right-0 bg-black p-2 rounded mt-1 z-50 w-32 border border-blue-500">
+                    <div class="h-2 bg-gray-700 rounded overflow-hidden">
+                         <div class="h-full bg-green-500" :style="{ width: testMicLevel + '%' }"></div>
+                    </div>
+                </div>
+
+                <button v-if="state.isRegistered" @click="handleLogout" class="text-gray-400 hover:text-white p-1 ml-2" title="Logout / Re-configure">
+                    <LogOut class="w-4 h-4" />
+                </button>
             </div>
         </div>
 
@@ -363,7 +513,13 @@ watch(() => state.audioStream, (newStream) => {
     </div>
     
     <!-- Hidden Audio Element for Remote Stream -->
-    <audio ref="remoteAudio" autoplay playsinline style="display:none;"></audio>
+    <audio ref="remoteAudio" autoplay playsinline controls style="position: absolute; bottom: 0; left: 0; z-index: 9999; opacity: 0.1; width: 100px; height: 50px; pointer-events: auto;"></audio>
+    <!-- Debug Info (Temporary) -->
+    <div v-if="state.callStatus !== 'idle'" style="position:fixed; top:10px; left:10px; z-index:9999; background:black; color:white; font-size:10px; padding:5px;">
+        Stream: {{ state.audioStream ? 'Active' : 'Null' }} <br>
+        Tracks: {{ state.audioStream ? state.audioStream.getTracks().length : 0 }} <br>
+        <button @click="$refs.remoteAudio.play()" style="background:red;color:white;">Force Play</button>
+    </div>
   </div>
 </template>
 

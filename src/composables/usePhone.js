@@ -1,4 +1,4 @@
-import { ref, reactive, computed, toRaw } from 'vue';
+import { ref, reactive, computed, toRaw, markRaw } from 'vue';
 import JsSIP from 'jssip';
 
 const state = reactive({
@@ -11,6 +11,9 @@ const state = reactive({
     timer: '00:00:00',
     error: null,
     audioStream: null,
+    error: null,
+    audioStream: null,
+    localVolume: 0, // 0-100
     iceServers: [] // Global ICE servers config
 });
 
@@ -24,6 +27,44 @@ const credentials = reactive({
 let ua = null;
 let timerInterval = null;
 let seconds = 0;
+
+let second = 0;
+
+// Helper: Munge SDP to force PCMU/PCMA (G.711) priority
+// This fixes "488 Not Acceptable Here / Incompatible Destination" from legacy gateways
+function mungeSDP(sdp) {
+    console.log('[Phone] Munging SDP to prioritize G.711...');
+    const lines = sdp.split('\r\n');
+    let mLineIndex = -1;
+    let audioPayloads = [];
+
+    // 1. Find the audio m-line and extract payloads
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('m=audio')) {
+            mLineIndex = i;
+            const parts = lines[i].split(' ');
+            // format: m=audio <port> <proto> <payloads...>
+            if (parts.length > 3) {
+                audioPayloads = parts.slice(3);
+            }
+            break;
+        }
+    }
+
+    if (mLineIndex === -1) return sdp;
+
+    // 2. Reorder payloads: Move 0 (PCMU) and 8 (PCMA) to the front
+    const preferred = ['0', '8'];
+    const others = audioPayloads.filter(p => !preferred.includes(p));
+    const newPayloads = [...preferred, ...others];
+
+    // 3. Reconstruct m-line
+    const parts = lines[mLineIndex].split(' ');
+    // Keep first 3 parts (m=audio, port, proto) and append new payloads
+    lines[mLineIndex] = [...parts.slice(0, 3), ...newPayloads].join(' ');
+
+    return lines.join('\r\n');
+}
 
 export function usePhone() {
     // -------------------
@@ -156,17 +197,134 @@ export function usePhone() {
                 console.log('[Phone] Calling:', state.remoteIdentity);
             }
 
+            // Audio Level Monitor
+            let audioMonitorCtx = null;
+            let audioMonitorInterval = null;
+
+            const setupAudioMonitor = (stream) => {
+                if (audioMonitorCtx) return; // Already monitoring
+                try {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioMonitorCtx = new AudioContext();
+                    const source = audioMonitorCtx.createMediaStreamSource(stream);
+                    const analyser = audioMonitorCtx.createAnalyser();
+                    analyser.fftSize = 256;
+                    source.connect(analyser);
+
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                    audioMonitorInterval = setInterval(() => {
+                        analyser.getByteFrequencyData(dataArray);
+                        // Calculate average volume
+                        let sum = 0;
+                        for (let i = 0; i < dataArray.length; i++) {
+                            sum += dataArray[i];
+                        }
+                        const average = sum / dataArray.length;
+                        // Normalize roughly to 0-100 (average usually low for speech)
+                        state.localVolume = Math.min(100, Math.round(average * 2));
+                        // console.log('[Phone] Mic Volume:', state.localVolume);
+                    }, 100);
+
+                    console.log('[Phone] Local Audio Monitor started');
+                } catch (e) {
+                    console.error('[Phone] Failed to setup audio monitor:', e);
+                }
+            };
+
+            const stopAudioMonitor = () => {
+                if (audioMonitorInterval) {
+                    clearInterval(audioMonitorInterval);
+                    audioMonitorInterval = null;
+                }
+                if (audioMonitorCtx) {
+                    audioMonitorCtx.close();
+                    audioMonitorCtx = null;
+                }
+                state.localVolume = 0;
+            };
+
             // Media Handling: Capture Remote Stream
-            session.on('peerconnection', (e) => {
-                console.log('[Phone] PeerConnection created');
-                const pc = e.peerconnection;
+            const setupPeerConnection = (pc) => {
+                if (pc._hasSetup) return; // Prevent duplicate setup
+                pc._hasSetup = true;
+
+                console.log('[Phone] PeerConnection setup for session');
 
                 pc.addEventListener('track', (trackEvent) => {
                     console.log('[Phone] Remote track received:', trackEvent);
+                    let stream = null;
                     if (trackEvent.streams && trackEvent.streams[0]) {
-                        state.audioStream = trackEvent.streams[0];
+                        stream = trackEvent.streams[0];
+                    } else {
+                        console.log('[Phone] No stream in track event, creating new MediaStream...');
+                        stream = new MediaStream([trackEvent.track]);
+                    }
+                    // Use markRaw to prevent Vue from making the MediaStream reactive
+                    state.audioStream = markRaw(stream);
+                });
+
+                // Request: Print STUN/ICE info
+                pc.addEventListener('icecandidate', (event) => {
+                    if (event.candidate) {
+                        console.log('[Phone] New ICE Candidate:', event.candidate.candidate);
+                    } else {
+                        console.log('[Phone] ICE Candidate gathering completed.');
                     }
                 });
+
+                pc.addEventListener('iceconnectionstatechange', () => {
+                    console.log('[Phone] ICE Connection State:', pc.iceConnectionState);
+                });
+
+                // Check for existing tracks (in case we missed the 'track' event)
+                const receivers = pc.getReceivers();
+                if (receivers && receivers.length > 0) {
+                    console.log('[Phone] Found existing receivers:', receivers.length);
+                    receivers.forEach(receiver => {
+                        if (receiver.track && receiver.track.kind === 'audio') {
+                            console.log('[Phone] Found existing audio track, setting up stream...');
+                            const stream = new MediaStream([receiver.track]);
+                            state.audioStream = markRaw(stream);
+                        }
+                    });
+                }
+
+                // Check for local senders (Microphone)
+                const senders = pc.getSenders();
+                console.log('[Phone] Local Senders:', senders.length);
+                senders.forEach((sender, index) => {
+                    console.log(`[Phone] Sender ${index}:`, sender.track ? `Track ${sender.track.kind} (${sender.track.readyState})` : 'No Track');
+                    // Disable automatic monitoring to avoid AudioContext conflicts/issues
+                    /*
+                    if (sender.track && sender.track.kind === 'audio') {
+                        if (sender.track.muted) {
+                            console.warn(`[Phone] Sender ${index} track is MUTED!`);
+                        }
+                        // Start monitoring this track
+                        console.log('[Phone] Setting up monitor for local sender track');
+                        const localStream = new MediaStream([sender.track]);
+                        setupAudioMonitor(localStream);
+                    }
+                    */
+                });
+            };
+
+            if (session.connection) {
+                setupPeerConnection(session.connection);
+            }
+
+            session.on('peerconnection', (e) => {
+                console.log('[Phone] PeerConnection created (event)');
+                setupPeerConnection(e.peerconnection);
+            });
+
+            // SDP Munging for Codec Priority
+            session.on('sdp', (data) => {
+                if (data.originator === 'local' && data.type === 'offer') {
+                    console.log('[Phone] Intercepting Local SDP Offer...');
+                    data.sdp = mungeSDP(data.sdp);
+                }
             });
 
             session.on('progress', () => {
@@ -185,6 +343,7 @@ export function usePhone() {
 
             session.on('ended', () => {
                 console.log('[Phone] Call ended');
+                stopAudioMonitor(); // Stop monitor
                 // Determine final status if not already connected
                 if (callLog.status !== 'Connected') {
                     callLog.status = session.direction === 'incoming' ? 'Missed' : 'Cancelled';
@@ -195,6 +354,7 @@ export function usePhone() {
 
             session.on('failed', (e) => {
                 console.error('[Phone] Call failed:', e);
+                stopAudioMonitor(); // Stop monitor
                 state.error = `Call Failed: ${e.cause} `;
                 callLog.status = 'Failed';
                 addToHistory(callLog);
@@ -222,9 +382,13 @@ export function usePhone() {
     };
 
     const logout = () => {
-        console.log('[Phone] Logging out');
+        console.log('[Phone] Logging out...');
         if (ua) {
-            ua.stop();
+            try {
+                ua.stop();
+            } catch (e) {
+                console.error('[Phone] Error stopping UA:', e);
+            }
             ua = null;
         }
         state.isRegistered = false;
@@ -232,6 +396,7 @@ export function usePhone() {
         state.agentStatus = 'offline';
         localStorage.removeItem('sip_creds');
         resetCall();
+        console.log('[Phone] Logout complete. isRegistered:', state.isRegistered);
     };
 
     const setAgentStatus = (status) => {
@@ -260,10 +425,16 @@ export function usePhone() {
         console.log(`[Phone] Configuration Identity: ${ua.configuration.uri} `);
         console.log(`[Phone] Dialing Target URI: ${targetURI} `);
 
+        const iceServers = toRaw(state.iceServers);
+        console.log('[Phone] using ICE Servers:', iceServers);
+        if (!iceServers || iceServers.length === 0) {
+            console.warn('[Phone] ⚠️ WARNING: No ICE/STUN servers configured! Calls may fail on public networks.');
+        }
+
         ua.call(targetURI, {
             mediaConstraints: { audio: true, video: false },
             pcConfig: {
-                iceServers: [],
+                iceServers: state.iceServers,
                 rtcpMuxPolicy: 'require'
             },
             rtcOfferConstraints: {
@@ -275,12 +446,17 @@ export function usePhone() {
 
     const answer = () => {
         console.log('[Phone] Answering call...');
+        const iceServers = toRaw(state.iceServers);
+        console.log('[Phone] using ICE Servers:', iceServers);
+        if (!iceServers || iceServers.length === 0) {
+            console.warn('[Phone] ⚠️ WARNING: No ICE/STUN servers configured! Calls may fail on public networks.');
+        }
         if (state.session) {
             const rawSession = toRaw(state.session);
             rawSession.answer({
                 mediaConstraints: { audio: true, video: false },
                 pcConfig: {
-                    iceServers: [],
+                    iceServers: state.iceServers,
                     rtcpMuxPolicy: 'require'
                 },
                 rtcAnswerConstraints: {
@@ -368,9 +544,22 @@ export function usePhone() {
     const tryAutoLogin = () => {
         const stored = localStorage.getItem('sip_creds');
         if (stored) {
-            const { user, password, domain, socketUrl } = JSON.parse(stored);
-            if (user && password && domain && socketUrl) {
-                login(user, password, domain, socketUrl);
+            try {
+                const parsed = JSON.parse(stored);
+                // Handle legacy format where iceServers might be missing
+                const user = parsed.user;
+                const password = parsed.password;
+                const domain = parsed.domain;
+                const socketUrl = parsed.socketUrl;
+                const iceServers = parsed.iceServers || [];
+
+                if (user && password && domain && socketUrl) {
+                    // Update state.iceServers immediately before login just in case
+                    state.iceServers = iceServers;
+                    login(user, password, domain, socketUrl, iceServers);
+                }
+            } catch (e) {
+                console.error('[Phone] Failed to parse stored credentials', e);
             }
         }
     }

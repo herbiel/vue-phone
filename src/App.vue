@@ -4,7 +4,7 @@ import PhoneWidget from './components/PhoneWidget.vue';
 const phoneNumbers = [
   { name: 'Alice Smith', number: '1001' },
   { name: 'Bob Jones', number: '10003' },
-  { name: 'Customer Support', number: '8005550199' },
+  { name: 'Customer Support', number: '02130208149' },
 ];
 
 const callNumber = (number) => {
