@@ -4,6 +4,7 @@ import path from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: './', // Ensure relative paths for static deployment
   plugins: [vue()],
   build: {
     copyPublicDir: true, // Enable copying of public/ directory
