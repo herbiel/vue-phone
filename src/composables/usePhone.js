@@ -319,6 +319,29 @@ export function usePhone() {
                 setupPeerConnection(e.peerconnection);
             });
 
+            // JsSIP waits for ICE gathering to finish before sending INVITE/200 OK.
+            // Browsers can block ~40s waiting for relay/TURN candidates that never arrive.
+            // Short-circuit after the last candidate trickles in (or on srflx when STUN is configured).
+            let iceReadyTimer = null;
+            session.on('icecandidate', (event) => {
+                if (!event.candidate) return;
+
+                if (state.iceServers?.length && event.candidate.type === 'srflx') {
+                    console.log('[Phone] STUN candidate ready, sending SDP early');
+                    clearTimeout(iceReadyTimer);
+                    iceReadyTimer = null;
+                    event.ready();
+                    return;
+                }
+
+                clearTimeout(iceReadyTimer);
+                iceReadyTimer = setTimeout(() => {
+                    console.log('[Phone] ICE gathering timeout, sending SDP with available candidates');
+                    iceReadyTimer = null;
+                    event.ready();
+                }, 1000);
+            });
+
             // SDP Munging for Codec Priority
             session.on('sdp', (data) => {
                 if (data.originator === 'local' && data.type === 'offer') {
@@ -343,6 +366,7 @@ export function usePhone() {
 
             session.on('ended', () => {
                 console.log('[Phone] Call ended');
+                clearTimeout(iceReadyTimer);
                 stopAudioMonitor(); // Stop monitor
                 // Determine final status if not already connected
                 if (callLog.status !== 'Connected') {
@@ -354,6 +378,7 @@ export function usePhone() {
 
             session.on('failed', (e) => {
                 console.error('[Phone] Call failed:', e);
+                clearTimeout(iceReadyTimer);
                 stopAudioMonitor(); // Stop monitor
                 state.error = `Call Failed: ${e.cause} `;
                 callLog.status = 'Failed';

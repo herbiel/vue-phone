@@ -9,9 +9,9 @@ const { state, login, logout, call, answer, hangup, mute, hold, sendDTMF, transf
 
 const form = ref({
   user: '1001',
-  password: '1de3ef49c86241a',
-  domain: 'telephone.ivoji.site',
-  socketUrl: 'wss://telephone.ivoji.site:7443',
+  password: '4828fde75770d82',
+  domain: 'telephone.finbubu.com',
+  socketUrl: 'wss://telephone.finbubu.com:7444',
   useIce: true,
   iceString: 'stun:stun.freeswitch.org:3478'
 });
@@ -20,7 +20,7 @@ const form = ref({
 const isLocked = ref(true);
 const unlockPassword = ref('');
 const unlockError = ref('');
-const APP_PIN = 'Iv0ji@2025'; 
+const APP_PIN = '2025'; 
 
 const handleUnlock = () => {
     if (unlockPassword.value === APP_PIN) {
