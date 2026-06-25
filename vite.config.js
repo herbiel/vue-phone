@@ -2,10 +2,12 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 // https://vite.dev/config/
 export default defineConfig({
   base: './', // Ensure relative paths for static deployment
-  plugins: [vue()],
+  plugins: [vue(), cloudflare()],
   build: {
     copyPublicDir: true, // Enable copying of public/ directory
     lib: {
