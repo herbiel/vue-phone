@@ -5,7 +5,7 @@ import { usePhone } from '../composables/usePhone';
 import { Phone, Mic, MicOff, Pause, Play, Grip, ArrowRightLeft, PhoneOff, ChevronDown, ChevronUp, Wifi, Clock, X, Delete, LogOut } from 'lucide-vue-next';
 
 // Use the existing Composable logic
-const { state, login, logout, call, answer, hangup, mute, hold, sendDTMF, transfer, tryAutoLogin, history, clearHistory, setAgentStatus } = usePhone();
+const { state, login, logout, call, answer, hangup, mute, hold, sendDTMF, transfer, tryAutoLogin, history, clearHistory, setAgentStatus, setBusinessId } = usePhone();
 
 const form = ref({
   user: '1001',
@@ -13,27 +13,9 @@ const form = ref({
   domain: 'telephone.finbubu.com',
   socketUrl: 'wss://telephone.finbubu.com:7444',
   useIce: true,
-  iceString: 'stun:stun.freeswitch.org:3478'
+  iceString: 'stun:stun.freeswitch.org:3478',
+  businessId: 'test-business-001'
 });
-
-// Lock Screen State
-const isLocked = ref(true);
-const unlockPassword = ref('');
-const unlockError = ref('');
-const APP_PIN = '2025'; 
-
-const handleUnlock = () => {
-    if (unlockPassword.value === APP_PIN) {
-        isLocked.value = false;
-        // Auto-login after unlock if not registered
-        if (!state.isRegistered) {
-            handleLogin(); 
-        }
-    } else {
-        unlockError.value = 'Incorrect Password';
-        unlockPassword.value = '';
-    }
-};
 
 // UI State
 const isActive = ref(true); // Maps to expanded/minimized
@@ -168,6 +150,12 @@ const isOnHold = computed(() => state.session && state.session.isOnHold().local)
 const remoteName = computed(() => state.remoteIdentity || 'Ready');
 const remoteNumber = computed(() => state.remoteIdentity ? `(${state.remoteIdentity})` : '');
 
+const connectionStatus = computed(() => {
+    if (state.isRegistered) return 'Ready';
+    if (state.isConnected) return 'Connecting...';
+    return 'Offline';
+});
+
 // Handle Login Form
 const handleLogin = () => {
     if (form.value.user && form.value.password && form.value.domain && form.value.socketUrl) {
@@ -180,28 +168,35 @@ const handleLogin = () => {
              }
         }
         
-        login(form.value.user, form.value.password, form.value.domain, form.value.socketUrl, iceServers);
+        login(form.value.user, form.value.password, form.value.domain, form.value.socketUrl, iceServers, form.value.businessId);
     }
 };
 
 const handleLogout = () => {
     console.log('[PhoneWidget] Logout button clicked');
     logout();
-    // Optional: Reset form or other UI state if needed
 };
 
-const handleCall = (number) => {
+const handleCall = (number, options = {}) => {
     if(!state.isRegistered) {
         alert("Please login first");
         return;
     }
-    call(number);
+    call(number, options);
     isActive.value = true; // Expand on call
 }
 window.handlePhoneCall = handleCall;
+window.setPhoneBusinessId = setBusinessId;
 
 onMounted(() => {
-    tryAutoLogin();
+    if (form.value.businessId) {
+        setBusinessId(form.value.businessId);
+    }
+    if (localStorage.getItem('sip_creds')) {
+        tryAutoLogin();
+    } else {
+        handleLogin();
+    }
 });
 
 // Actions mapped to UI
@@ -294,22 +289,9 @@ watch(() => state.audioStream, (newStream) => {
 
 <template>
   <div>
-    <!-- Lock Screen Overlay -->
-    <div v-if="isLocked" class="fixed inset-0 z-[9999] bg-[#2c3e50] flex flex-col items-center justify-center text-white">
-        <div class="w-64 p-6 bg-[#34495e] rounded-lg shadow-xl text-center">
-            <h2 class="text-xl font-bold mb-4">Phone Locked</h2>
-            <input type="password" v-model="unlockPassword" @keyup.enter="handleUnlock" placeholder="Enter PIN" 
-                   class="w-full bg-[#2c3e50] border border-gray-600 rounded p-2 text-center text-white mb-4 outline-none focus:border-blue-500 transition-colors" />
-            <button @click="handleUnlock" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded transition-colors">
-                Unlock
-            </button>
-            <p v-if="unlockError" class="text-red-400 text-xs mt-2">{{ unlockError }}</p>
-        </div>
-    </div>
-
-    <!-- Login Overlay (Preserved functionality, using similar style to new bar if possible, or keeping previous simple style) -->
-    <div v-else-if="!state.isRegistered" 
-         class="fixed bottom-4 right-4 z-50 w-[320px] bg-[#2c3e50] text-[#ecf0f1] rounded-[16px] p-[15px] shadow-[0_10px_30px_rgba(0,0,0,0.4)] flex flex-col gap-4 transition-all">
+    <!-- SIP Login (shown when not registered) -->
+    <div v-if="!state.isRegistered"
+         class="fixed bottom-4 right-4 z-[1100] w-[320px] bg-[#2c3e50] text-[#ecf0f1] rounded-[16px] p-[15px] shadow-[0_10px_30px_rgba(0,0,0,0.4)] flex flex-col gap-4 transition-all">
          <h2 class="text-lg font-bold border-b border-white/10 pb-2">SIP Login</h2>
          <input v-model="form.user" placeholder="Extension" class="bg-[#34495e] border-none rounded p-2 text-white placeholder-gray-400 outline-none" />
          <input v-model="form.password" type="password" placeholder="Password" class="bg-[#34495e] border-none rounded p-2 text-white placeholder-gray-400 outline-none" />
@@ -359,7 +341,7 @@ watch(() => state.audioStream, (newStream) => {
          <p v-if="state.error" class="text-[#e74c3c] text-xs text-center">{{ state.error }}</p>
     </div>
 
-    <!-- User's "Web Call Bar" Template -->
+    <!-- Web Call Bar (shown when registered) -->
     <div v-else :class="['call-bar-container', { 'is-active': isActive }]">
         
         <!-- Expanded View Only (Minimize button removed, so always assume expanded or controlled externally if needed, but for now just show content) -->
@@ -379,7 +361,7 @@ watch(() => state.audioStream, (newStream) => {
                      <option value="busy">Busy</option>
                      <option value="offline">Offline</option>
                  </select>
-                <div v-else class="status-text">Ready</div>
+                <div v-else class="status-text">{{ connectionStatus }}</div>
                 
                 <span v-if="state.callStatus !== 'idle'" class="status-text md:hidden">{{ remoteName || 'Connected' }}</span>
                 

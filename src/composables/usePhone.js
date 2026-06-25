@@ -14,7 +14,8 @@ const state = reactive({
     error: null,
     audioStream: null,
     localVolume: 0, // 0-100
-    iceServers: [] // Global ICE servers config
+    iceServers: [], // Global ICE servers config
+    defaultBusinessId: ''
 });
 
 const credentials = reactive({
@@ -390,8 +391,8 @@ export function usePhone() {
         ua.start();
     };
 
-    const login = (user, password, domain, socketUrl, iceServers = []) => {
-        console.log('[Phone] Logging in...', { user, domain, socketUrl, iceServers });
+    const login = (user, password, domain, socketUrl, iceServers = [], businessId = '') => {
+        console.log('[Phone] Logging in...', { user, domain, socketUrl, iceServers, businessId });
         credentials.user = user;
         credentials.password = password;
         credentials.domain = domain;
@@ -399,9 +400,15 @@ export function usePhone() {
 
         // Save iceServers to state
         state.iceServers = iceServers || [];
+        if (businessId) {
+            state.defaultBusinessId = businessId;
+        }
 
         // Simple persistence
-        localStorage.setItem('sip_creds', JSON.stringify({ user, password, domain, socketUrl, iceServers }));
+        localStorage.setItem('sip_creds', JSON.stringify({
+            user, password, domain, socketUrl, iceServers,
+            businessId: state.defaultBusinessId
+        }));
 
         initUA();
     };
@@ -438,8 +445,8 @@ export function usePhone() {
         }
     };
 
-    const call = (target) => {
-        console.log('[Phone] Initiating call to:', target);
+    const call = (target, options = {}) => {
+        console.log('[Phone] Initiating call to:', target, options);
         if (!ua || !state.isRegistered) {
             console.warn('[Phone] Call aborted: Not registered');
             state.error = 'Not registered. Please login.';
@@ -456,7 +463,17 @@ export function usePhone() {
             console.warn('[Phone] ⚠️ WARNING: No ICE/STUN servers configured! Calls may fail on public networks.');
         }
 
+        const extraHeaders = [];
+        const businessId = options.businessId || state.defaultBusinessId;
+        if (businessId) {
+            extraHeaders.push(`X-Business-Id: ${businessId}`);
+            console.log('[Phone] SIP extraHeaders:', extraHeaders);
+        } else {
+            console.warn('[Phone] No businessId set, X-Business-Id header will not be sent');
+        }
+
         ua.call(targetURI, {
+            extraHeaders,
             mediaConstraints: { audio: true, video: false },
             pcConfig: {
                 iceServers: state.iceServers,
@@ -565,6 +582,11 @@ export function usePhone() {
         state.audioStream = null;
     };
 
+    const setBusinessId = (businessId) => {
+        state.defaultBusinessId = businessId || '';
+        console.log('[Phone] defaultBusinessId set to:', state.defaultBusinessId);
+    };
+
     // Auto-login if creds exist
     const tryAutoLogin = () => {
         const stored = localStorage.getItem('sip_creds');
@@ -577,11 +599,15 @@ export function usePhone() {
                 const domain = parsed.domain;
                 const socketUrl = parsed.socketUrl;
                 const iceServers = parsed.iceServers || [];
+                const businessId = parsed.businessId || '';
 
                 if (user && password && domain && socketUrl) {
                     // Update state.iceServers immediately before login just in case
                     state.iceServers = iceServers;
-                    login(user, password, domain, socketUrl, iceServers);
+                    if (businessId) {
+                        state.defaultBusinessId = businessId;
+                    }
+                    login(user, password, domain, socketUrl, iceServers, businessId);
                 }
             } catch (e) {
                 console.error('[Phone] Failed to parse stored credentials', e);
@@ -603,6 +629,7 @@ export function usePhone() {
         tryAutoLogin,
         history,
         clearHistory,
-        setAgentStatus
+        setAgentStatus,
+        setBusinessId
     };
 }

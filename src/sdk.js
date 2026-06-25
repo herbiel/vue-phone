@@ -4,7 +4,7 @@ import { usePhone } from './composables/usePhone.js';
 import './style.css'; // Ensure styles are bundled
 
 // Get singleton actions from the composable
-const { call, login } = usePhone();
+const { call, login, setBusinessId: setDefaultBusinessId } = usePhone();
 
 class PhoneSDK {
     constructor() {
@@ -19,6 +19,7 @@ class PhoneSDK {
      * @param {string} config.password - SIP Password
      * @param {string} config.domain - SIP Domain
      * @param {string} config.socketUrl - WSS URL
+     * @param {string} [config.businessId] - Default X-Business-Id for all outbound calls
      */
     init(config) {
         if (this.app) {
@@ -26,7 +27,7 @@ class PhoneSDK {
             return;
         }
 
-        const { id, user, password, domain, socketUrl, iceServers } = config;
+        const { id, user, password, domain, socketUrl, iceServers, businessId } = config;
 
         // Find or create container
         let container = document.getElementById(id);
@@ -41,24 +42,38 @@ class PhoneSDK {
         this.app = createApp(PhoneWidget);
         this.app.mount(container);
 
+        if (businessId) {
+            setDefaultBusinessId(businessId);
+        }
+
         // Auto login if credentials provided
         if (user && password && domain && socketUrl) {
             console.log('[PhoneSDK] Auto-logging in with provided config...');
-            login(user, password, domain, socketUrl, iceServers);
+            login(user, password, domain, socketUrl, iceServers, businessId);
         }
     }
 
     /**
      * Initiate an outgoing call
      * @param {string} number
+     * @param {Object} [options]
+     * @param {string} [options.businessId] - Sent to FreeSWITCH as X-Business-Id SIP header
      */
-    makeCall(number) {
+    makeCall(number, options = {}) {
         if (!this.app) {
             console.error('[PhoneSDK] Not initialized. Call init() first.');
             return;
         }
-        console.log(`[PhoneSDK] making call to ${number}`);
-        call(number);
+        console.log(`[PhoneSDK] making call to ${number}`, options);
+        call(number, options);
+    }
+
+    /**
+     * Set default businessId for all outbound calls
+     * @param {string} businessId
+     */
+    setBusinessId(businessId) {
+        setDefaultBusinessId(businessId);
     }
 }
 

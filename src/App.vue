@@ -2,14 +2,14 @@
 import PhoneWidget from './components/PhoneWidget.vue';
 
 const phoneNumbers = [
-  { name: 'Alice Smith', number: '1001' },
-  { name: 'Bob Jones', number: '10003' },
-  { name: 'Customer Support', number: '02130208149' },
+  { name: 'Alice Smith', number: '1001', businessId: 'biz-alice-001' },
+  { name: 'Bob Jones', number: '10003', businessId: 'biz-bob-002' },
+  { name: 'Customer Support', number: '02130208149', businessId: 'biz-support-003' },
 ];
 
-const callNumber = (number) => {
+const callNumber = (contact) => {
     if (window.handlePhoneCall) {
-        window.handlePhoneCall(number);
+        window.handlePhoneCall(contact.number, { businessId: contact.businessId });
     }
 };
 </script>
@@ -55,11 +55,11 @@ const callNumber = (number) => {
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 Employee
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-blue-600 cursor-pointer hover:underline" @click="callNumber(contact.number)">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-blue-600 cursor-pointer hover:underline" @click="callNumber(contact)">
                                 {{ contact.number }}
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                <button @click="callNumber(contact.number)" class="text-blue-600 hover:text-blue-900 bg-blue-50 px-3 py-1 rounded-md">Call</button>
+                                <button @click="callNumber(contact)" class="text-blue-600 hover:text-blue-900 bg-blue-50 px-3 py-1 rounded-md">Call</button>
                             </td>
                         </tr>
                     </tbody>
